@@ -8,8 +8,10 @@ use once_cell::sync::OnceCell;
 use rtc_tenclave::kv_store::fs::{FsStore, SgxFiler};
 use rtc_tenclave::kv_store::KvStore;
 use serde::{Deserialize, Serialize};
+use sgx_tcrypto::SgxShaHandle;
 use sgx_tstd::sync::{SgxMutex as Mutex, SgxMutexGuard as MutexGuard};
 use sgx_tstd::untrusted::{fs as untrusted_fs, path as untrusted_path};
+use sgx_types::{sgx_sha256_hash_t, SgxResult};
 use uuid::Uuid;
 
 use crate::{jwt, uuid_to_string};
@@ -36,6 +38,22 @@ fn kv_store<'a>(
         Mutex::new(FsStore::new(path, SgxFiler))
     });
     store.lock().expect("FS store mutex poisoned")
+}
+
+/// Combine the dataset UUID and access key into a single opaque lookup key string.
+/// This uses a SHA-256, but any cryptographic digest should work.
+#[allow(dead_code)] // TODO
+fn derive_lookup_key(dataset_uuid: Uuid, access_key: [u8; 24]) -> SgxResult<String> {
+    let h = SgxShaHandle::new();
+    h.init()?;
+    h.update_slice(dataset_uuid.as_bytes())?;
+    h.update_slice(&access_key)?;
+    let hash_bytes: sgx_sha256_hash_t = h.get_hash()?;
+    h.close()?;
+
+    // TODO: Consider changing the KvStore interface to use byte string keys,
+    //       to avoid the need for string-encoding?
+    Ok(hex::encode(hash_bytes))
 }
 
 // Returns exec token hash
