@@ -29,6 +29,7 @@ once_cell = { git = "https://github.com/mesalock-linux/once_cell-sgx.git" }
 serde = { git = "https://github.com/mesalock-linux/serde-sgx", features = ["derive"] }
 serde_json = { git = "https://github.com/mesalock-linux/serde-json-sgx" }
 
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 secrecy = { version = "0.7.0", default-features = false }
 
 rtc_types = { path = "../rtc_types", features = ["teaclave_sgx"] }
