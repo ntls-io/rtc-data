@@ -79,6 +79,35 @@ fn derive_lookup_key(dataset_uuid: Uuid, access_key: [u8; 24]) -> SgxResult<Stri
     Ok(hex::encode(hash_bytes))
 }
 
+/// Save a new dataset access key and associated metadata in the store.
+///
+/// This must be called before [`issue_token`] can be called.
+///
+/// # Panics
+///
+/// If `(dataset_uuid, access_key)` already exists in the store.
+#[allow(dead_code)] // TODO
+pub(crate) fn save_access_key(
+    dataset_uuid: Uuid,
+    access_key: [u8; 24],
+    dataset_size: u64,
+) -> Result<(), io::Error> {
+    let lookup_key = derive_lookup_key(dataset_uuid, access_key)?;
+    let mut store = kv_store();
+    let new_token_set = ExecutionTokenSet::new(dataset_uuid, dataset_size);
+
+    store
+        .try_insert(&lookup_key, &new_token_set)?
+        .map(|_existing| {
+            panic!(
+                "token_store::save_access_key: access key for dateset_uuid={:?} already saved (this should not happen)",
+                dataset_uuid,
+            )
+        });
+
+    Ok(())
+}
+
 // Returns exec token hash
 pub(crate) fn issue_token(
     dataset_uuid: Uuid,
