@@ -86,7 +86,6 @@ fn derive_lookup_key(dataset_uuid: Uuid, access_key: [u8; 24]) -> SgxResult<Stri
 /// # Panics
 ///
 /// If `(dataset_uuid, access_key)` already exists in the store.
-#[allow(dead_code)] // TODO
 pub(crate) fn save_access_key(
     dataset_uuid: Uuid,
     access_key: [u8; 24],
