@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
@@ -16,16 +17,38 @@ use uuid::Uuid;
 
 use crate::jwt;
 
+/// The set of execution tokens issued for a dataset.
 #[derive(Serialize, Deserialize)]
-struct ExecutionTokenRecord {
+struct ExecutionTokenSet {
+    dataset_uuid: Uuid, // XXX(Pi): This may be redundant? Remove, or keep for self-integrity checking?
+
+    /// The dataset's unsealed size in bytes.
+    dataset_size: u64,
+
+    /// Usage state of the issued execution tokens, by JWT ID (`jti`).
+    issued_tokens: HashMap<Uuid, ExecutionTokenState>,
+}
+
+impl ExecutionTokenSet {
+    #[allow(unused)]
+    fn new(dataset_uuid: Uuid, dataset_size: u64) -> ExecutionTokenSet {
+        ExecutionTokenSet {
+            dataset_uuid,
+            dataset_size,
+            issued_tokens: HashMap::new(),
+        }
+    }
+}
+
+/// Usage state of a single execution token.
+#[derive(Serialize, Deserialize)]
+struct ExecutionTokenState {
     exec_module_hash: [u8; 32],
-    dataset_uuid: Uuid,
     allowed_uses: u32,
     current_uses: u32,
 }
 
-fn kv_store<'a>(
-) -> MutexGuard<'a, impl KvStore<HashMap<Uuid, ExecutionTokenRecord>, Error = io::Error>> {
+fn kv_store<'a>() -> MutexGuard<'a, impl KvStore<ExecutionTokenSet, Error = io::Error>> {
     static TOKEN_FS_STORE: OnceCell<Mutex<FsStore<SgxFiler>>> = OnceCell::new();
     let store = TOKEN_FS_STORE.get_or_init(|| {
         // TODO: Evaluate if this make sense, and what the possible attack vectors can be from relying on the
@@ -78,6 +101,13 @@ pub(crate) fn issue_token(
     Ok(token)
 }
 
+/// Save a newly-issued execution token's state to the store.
+///
+/// Fail with an error for invalid `(dataset_uuid, access_key)`.
+///
+/// # Panics
+///
+/// If `token_uuid` was already issued.
 fn save_token(
     dataset_uuid: Uuid,
     access_key: [u8; 24],
@@ -87,17 +117,29 @@ fn save_token(
 ) -> Result<(), io::Error> {
     let lookup_key = derive_lookup_key(dataset_uuid, access_key)?;
     let mut store = kv_store();
-    let new_record = ExecutionTokenRecord {
-        dataset_uuid,
+    let new_token_state = ExecutionTokenState {
         exec_module_hash,
         allowed_uses: number_of_allowed_uses,
         current_uses: 0u32,
     };
 
-    store.alter(&lookup_key, |records| {
-        let mut records = records.unwrap_or_else(HashMap::new);
-        records.insert(token_uuid, new_record);
-        Some(records)
+    let mutated = store.mutate(&lookup_key, |mut token_set| {
+        // TODO: Use [`HashMap::try_insert`] once stable.
+        // Unstable tracking issue: <https://github.com/rust-lang/rust/issues/82766>
+        match token_set.issued_tokens.entry(token_uuid) {
+            Entry::Occupied(_entry) => panic!(
+                "token_store::save_token: token_uuid={:?} already issued (this should not happen)",
+                token_uuid,
+            ),
+            Entry::Vacant(entry) => entry.insert(new_token_state),
+        };
+        token_set
     })?;
-    Ok(())
+
+    // Handle lookup failure
+    match mutated {
+        // TODO(Pi): Use something better than the io NotFound here?
+        None => Err(io::ErrorKind::NotFound.into()),
+        Some(_) => Ok(()),
+    }
 }
