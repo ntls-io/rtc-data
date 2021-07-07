@@ -14,7 +14,7 @@ use sgx_tstd::untrusted::{fs as untrusted_fs, path as untrusted_path};
 use sgx_types::{sgx_sha256_hash_t, SgxResult};
 use uuid::Uuid;
 
-use crate::{jwt, uuid_to_string};
+use crate::jwt;
 
 #[derive(Serialize, Deserialize)]
 struct ExecutionTokenRecord {
@@ -59,6 +59,7 @@ fn derive_lookup_key(dataset_uuid: Uuid, access_key: [u8; 24]) -> SgxResult<Stri
 // Returns exec token hash
 pub(crate) fn issue_token(
     dataset_uuid: Uuid,
+    access_key: [u8; 24],
     exec_module_hash: [u8; 32],
     number_of_allowed_uses: u32,
     dataset_size: u64,
@@ -68,6 +69,7 @@ pub(crate) fn issue_token(
 
     save_token(
         dataset_uuid,
+        access_key,
         token_id,
         exec_module_hash,
         number_of_allowed_uses,
@@ -78,12 +80,13 @@ pub(crate) fn issue_token(
 
 fn save_token(
     dataset_uuid: Uuid,
+    access_key: [u8; 24],
     token_uuid: Uuid,
     exec_module_hash: [u8; 32],
     number_of_allowed_uses: u32,
 ) -> Result<(), io::Error> {
+    let lookup_key = derive_lookup_key(dataset_uuid, access_key)?;
     let mut store = kv_store();
-    let dataset_uuid_string = uuid_to_string(dataset_uuid);
     let new_record = ExecutionTokenRecord {
         dataset_uuid,
         exec_module_hash,
@@ -91,7 +94,7 @@ fn save_token(
         current_uses: 0u32,
     };
 
-    store.alter(&dataset_uuid_string, |records| {
+    store.alter(&lookup_key, |records| {
         let mut records = records.unwrap_or_else(HashMap::new);
         records.insert(token_uuid, new_record);
         Some(records)
